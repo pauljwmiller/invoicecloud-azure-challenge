@@ -1,0 +1,35 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfplan
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Terraform sensitive var files — use terraform.tfvars for non-secret values only
+*.auto.tfvars
+
+# .NET build output
+function/**/bin/
+function/**/obj/
+function/**/*.user
+
+# Local Azure Functions settings (contains connection strings, never commit)
+local.settings.json
+
+# Temp / local-only
+_sample_tmp/
+*.pdf
+
+# OS
+.DS_Store
+Thumbs.db
+
+# VS / Rider
+.vscode/
+.idea/
+*.suo
+*.user

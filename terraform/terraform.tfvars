@@ -1,0 +1,5 @@
+subscription_id = "4102d8ef-3071-429e-8392-b77866d04d1a"
+location        = "eastus"
+environment     = "dev"
+owner           = "pauljwmiller"
+project         = "invoicecloud"
