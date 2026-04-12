@@ -55,7 +55,7 @@ resource "azurerm_application_insights" "appi" {
 
 # ── Consumption (Y1 / Free Tier) App Service Plan ────────────────────────────
 resource "azurerm_service_plan" "asp" {
-  name                = "asp-${var.project}-func-${var.environment}"
+  name                = "EastUS2LinuxDynamicPlan"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   os_type             = "Linux"
@@ -121,25 +121,31 @@ resource "azurerm_private_dns_zone_virtual_network_link" "dns_vnet_link" {
 }
 
 # ── Bonus: Private Endpoint for Function App (data plane) ─────────────────────
-# Public access remains enabled for testing as noted in the challenge.
-# In production this would be disabled and access restricted to the VNet.
-resource "azurerm_private_endpoint" "pe_func" {
-  name                = "pe-func-${var.project}-${var.environment}"
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
-  subnet_id           = azurerm_subnet.snet_pe.id
-
-  private_service_connection {
-    name                           = "psc-func-${var.project}-${var.environment}"
-    private_connection_resource_id = azurerm_linux_function_app.func.id
-    subresource_names              = ["sites"]
-    is_manual_connection           = false
-  }
-
-  private_dns_zone_group {
-    name                 = "dns-zone-group-func"
-    private_dns_zone_ids = [azurerm_private_dns_zone.dns_func.id]
-  }
-
-  tags = local.tags
-}
+# NOTE: Azure does not support Private Endpoints on the Consumption (Y1/Dynamic)
+# plan. Attempting to provision one returns:
+#   BadRequest: SkuCode 'Dynamic' is invalid.
+#
+# The VNet, subnet, and Private DNS Zone above are fully provisioned and ready.
+# To enable the private endpoint, upgrade the App Service Plan sku_name from
+# "Y1" to "EP1" (Elastic Premium) and uncomment the resource block below.
+#
+# resource "azurerm_private_endpoint" "pe_func" {
+#   name                = "pe-func-${var.project}-${var.environment}"
+#   location            = azurerm_resource_group.rg.location
+#   resource_group_name = azurerm_resource_group.rg.name
+#   subnet_id           = azurerm_subnet.snet_pe.id
+#
+#   private_service_connection {
+#     name                           = "psc-func-${var.project}-${var.environment}"
+#     private_connection_resource_id = azurerm_linux_function_app.func.id
+#     subresource_names              = ["sites"]
+#     is_manual_connection           = false
+#   }
+#
+#   private_dns_zone_group {
+#     name                 = "dns-zone-group-func"
+#     private_dns_zone_ids = [azurerm_private_dns_zone.dns_func.id]
+#   }
+#
+#   tags = local.tags
+# }

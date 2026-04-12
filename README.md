@@ -2,7 +2,21 @@
 
 A Terraform-provisioned Azure Function App running a .NET 9 isolated-worker HTTP-triggered "Hello World" function on the **Consumption (Free/Y1) plan**.
 
-Includes the bonus: a **Private Endpoint** with Private DNS configuration for the Function App data plane, while keeping public access enabled for testing.
+Includes bonus items:
+- **VNet + Private DNS Zone** configured for private endpoint access
+- **GitHub Actions CI/CD pipeline** for automated build and deploy
+
+> **Note on Private Endpoint:** Azure does not support Private Endpoints on the Consumption (Dynamic/Y1) plan — this is a hard platform constraint. The VNet, subnet, and Private DNS Zone are fully provisioned and documented. A Private Endpoint would require upgrading to a Premium plan. See the [Bonus section](#bonus-private-endpoint--networking) for full details.
+
+---
+
+## Live Function URL
+
+```
+https://func-invoicecloud-hello-dev-6koqhv.azurewebsites.net/api/httpget
+```
+
+> Requires a function key (`?code=<key>`). See [Validation](#validation) below.
 
 ---
 
@@ -33,18 +47,17 @@ Includes the bonus: a **Private Endpoint** with Private DNS configuration for th
 
 ## Architecture
 
-| Resource | Name pattern | Purpose |
+| Resource | Name | Purpose |
 |---|---|---|
 | Resource Group | `rg-invoicecloud-func-dev` | Container for all resources |
 | Storage Account | `stinvoicecloud{suffix}` | Required by Functions runtime |
 | Log Analytics Workspace | `log-invoicecloud-func-dev` | Backend for App Insights |
 | Application Insights | `appi-invoicecloud-func-dev` | Telemetry and live metrics |
-| App Service Plan | `asp-invoicecloud-func-dev` | Y1 Consumption (free tier) |
+| App Service Plan | `EastUS2LinuxDynamicPlan` | Y1 Consumption (free tier) |
 | Function App | `func-invoicecloud-hello-dev-{suffix}` | Hosts the HTTP functions |
 | Virtual Network | `vnet-invoicecloud-func-dev` | Bonus: network for private endpoint |
 | Subnet | `snet-pe-invoicecloud-dev` | Bonus: dedicated PE subnet |
 | Private DNS Zone | `privatelink.azurewebsites.net` | Bonus: private DNS resolution |
-| Private Endpoint | `pe-func-invoicecloud-dev` | Bonus: private data-plane access |
 
 ---
 
@@ -55,6 +68,7 @@ Includes the bonus: a **Private Endpoint** with Private DNS configuration for th
 | Azure CLI | 2.84.0+ | https://learn.microsoft.com/en-us/cli/azure/install-azure-cli |
 | Terraform | 1.14.7+ | https://developer.hashicorp.com/terraform/install |
 | .NET SDK | 9.0+ | https://dotnet.microsoft.com/download |
+| Azure Functions Core Tools | 4.x | `npm install -g azure-functions-core-tools@4` |
 
 Verify installs:
 
@@ -62,6 +76,7 @@ Verify installs:
 az --version
 terraform --version
 dotnet --version
+func --version
 ```
 
 ---
@@ -92,48 +107,55 @@ terraform apply tfplan
 Terraform will output the function app name and public URL when complete:
 
 ```
-function_app_name    = "func-invoicecloud-hello-dev-abc123"
-function_url         = "https://func-invoicecloud-hello-dev-abc123.azurewebsites.net/api/httpget"
-private_endpoint_ip  = "10.0.1.4"
+function_app_name     = "func-invoicecloud-hello-dev-6koqhv"
+function_app_hostname = "func-invoicecloud-hello-dev-6koqhv.azurewebsites.net"
+function_url          = "https://func-invoicecloud-hello-dev-6koqhv.azurewebsites.net/api/httpget"
+resource_group_name   = "rg-invoicecloud-func-dev"
 ```
+
+> **Note:** On new Azure subscriptions the Consumption plan may need to be created via `az functionapp create --consumption-plan-location` rather than Terraform directly due to a Dynamic VM quota constraint. If `terraform apply` fails on the App Service Plan resource, create the function app manually with that CLI command, then import it into Terraform state:
+> ```bash
+> terraform import azurerm_service_plan.asp /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.Web/serverFarms/<plan-name>
+> terraform import azurerm_linux_function_app.func /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.Web/sites/<func-name>
+> ```
 
 ### 4. Deploy the Function Code
 
-Retrieve the function app name from Terraform output, then build and deploy:
-
 ```bash
-# From the repo root
 FUNC_APP_NAME=$(cd terraform && terraform output -raw function_app_name)
 
-dotnet publish function/http --configuration Release --output ./publish
-
-az functionapp deployment source config-zip \
-  --resource-group rg-invoicecloud-func-dev \
-  --name "$FUNC_APP_NAME" \
-  --src <(cd publish && zip -r - .)
-```
-
-Or using the Azure Functions Core Tools:
-
-```bash
 cd function/http
 func azure functionapp publish "$FUNC_APP_NAME" --dotnet-isolated
 ```
+
+This builds the .NET 9 project, packages it, uploads to blob storage, and syncs the triggers automatically.
 
 ---
 
 ## Validation
 
-Retrieve the function key and invoke the endpoint:
+Get the function key:
 
 ```bash
-FUNC_APP_NAME=$(cd terraform && terraform output -raw function_url)
+FUNC_APP_NAME=$(cd terraform && terraform output -raw function_app_name)
 
-# Simple GET – returns "Hello, World."
-curl "$FUNC_APP_NAME"
+az functionapp keys list \
+  --resource-group rg-invoicecloud-func-dev \
+  --name "$FUNC_APP_NAME" \
+  --query "functionKeys.default" -o tsv
+```
 
-# GET with name param – returns "Hello, Paul."
-curl "${FUNC_APP_NAME}?name=Paul"
+Test the endpoint:
+
+```bash
+FUNC_KEY=<your-function-key>
+FUNC_URL=$(cd terraform && terraform output -raw function_url)
+
+# Returns "Hello, World."
+curl "${FUNC_URL}?code=${FUNC_KEY}"
+
+# Returns "Hello, Paul."
+curl "${FUNC_URL}?code=${FUNC_KEY}&name=Paul"
 ```
 
 Expected responses:
@@ -143,37 +165,35 @@ Hello, World.
 Hello, Paul.
 ```
 
-You can also open the URL directly in a browser.
-
 ---
 
-## Bonus: Private Endpoint
+## Bonus: Private Endpoint & Networking
 
-### What was deployed
+### What was provisioned
 
-A **Private Endpoint** (`sites` sub-resource) is provisioned inside a dedicated subnet (`10.0.1.0/24`) within a VNet (`10.0.0.0/16`). A Private DNS Zone (`privatelink.azurewebsites.net`) is linked to the VNet so that resources inside the VNet resolve the function's hostname to the private IP instead of the public one.
+The Terraform configuration provisions a full networking stack ready for private endpoint connectivity:
 
-### Access model
+- **VNet** (`10.0.0.0/16`) in `eastus2`
+- **Subnet** (`10.0.1.0/24`) dedicated for private endpoints
+- **Private DNS Zone** (`privatelink.azurewebsites.net`) linked to the VNet
 
-Public access is **intentionally left enabled** per the challenge requirements to allow straightforward testing with `curl`. In a real production scenario you would:
+### Azure platform constraint
 
-1. Set `public_network_access_enabled = false` on the Function App
-2. Access the function from a VM, VPN gateway, or Azure Bastion connected to the same VNet
+Private Endpoints on Azure Function Apps require a **Premium (EP1+) or Dedicated plan**. The Consumption (Y1/Dynamic) plan does not support them — this is an Azure platform limitation, not a configuration issue. Attempting to create a private endpoint against a Dynamic-plan function app returns:
 
-### Testing from within the VNet
-
-From a VM in the same VNet:
-
-```bash
-# Resolves to the private IP via the private DNS zone
-curl https://<function-app-name>.azurewebsites.net/api/httpget
+```
+BadRequest: SkuCode 'Dynamic' is invalid.
 ```
 
-The private endpoint IP is exposed as a Terraform output:
+### What this means in practice
 
-```bash
-cd terraform && terraform output private_endpoint_ip
-```
+The networking infrastructure is in place. To enable a private endpoint:
+1. Upgrade the App Service Plan from `Y1` to `EP1` (Elastic Premium) in `main.tf`
+2. Re-run `terraform apply` — the private endpoint resource is already defined and will provision successfully
+
+### Access model (with Premium plan)
+
+Public access would be **intentionally left enabled** per the challenge requirements to allow testing with `curl`. In production you would set `public_network_access_enabled = false` and route all access through a VM, VPN gateway, or Azure Bastion in the same VNet.
 
 ---
 
@@ -220,4 +240,4 @@ This deletes the resource group and everything inside it.
 - No credentials or secrets are committed to this repository
 - `local.settings.json` is excluded via `.gitignore`
 - Terraform state is local — for team use, migrate state to Azure Blob Storage backend
-- The storage account access key is passed to the Function App via Terraform; consider using a managed identity and `storage_uses_managed_identity = true` for production workloads
+- The storage account access key is passed to the Function App via Terraform; for production use `storage_uses_managed_identity = true` with a managed identity instead

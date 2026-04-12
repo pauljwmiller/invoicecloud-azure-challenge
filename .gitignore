@@ -23,6 +23,9 @@ local.settings.json
 # Temp / local-only
 _sample_tmp/
 *.pdf
+*.zip
+publish/
+publish2/
 
 # OS
 .DS_Store

@@ -24,7 +24,11 @@ output "application_insights_connection_string" {
   sensitive   = true
 }
 
-output "private_endpoint_ip" {
-  description = "Private IP assigned to the Function App private endpoint"
-  value       = azurerm_private_endpoint.pe_func.private_service_connection[0].private_ip_address
-}
+# Private endpoint IP output is omitted — the Consumption (Y1) plan does not
+# support Private Endpoints. Uncomment when upgrading to EP1 and enabling the
+# azurerm_private_endpoint resource in main.tf.
+#
+# output "private_endpoint_ip" {
+#   description = "Private IP assigned to the Function App private endpoint"
+#   value       = azurerm_private_endpoint.pe_func.private_service_connection[0].private_ip_address
+# }
