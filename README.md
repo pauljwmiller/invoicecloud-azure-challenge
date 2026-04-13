@@ -217,9 +217,11 @@ In production you would set `public_network_access_enabled = false` on the Funct
 
 ### Enabling the Function App Private Endpoint
 
-One change in `main.tf`, then `terraform apply`:
+Y1 was chosen based on the assumption that "free tier" refers to Azure's designated free tier for Functions — a plan with a permanent monthly free grant (1M executions, 400K GB-seconds) on any subscription type. Flex Consumption also has a monthly free grant but is not classified by Azure as the free tier plan. EP1 is a fixed-cost dedicated plan. If the intent was to allow Flex Consumption, enabling the private endpoint below would be the natural next step.
 
-1. Change `sku_name = "Y1"` to `sku_name = "EP1"` (or migrate to Flex Consumption)
+To enable the Function App private endpoint, one change in `main.tf` then `terraform apply`:
+
+1. Change `sku_name = "Y1"` to `sku_name = "EP1"` or migrate to Flex Consumption (`functionapp-consumption-flex`)
 2. Uncomment the `azurerm_private_endpoint.pe_func` resource block
 3. Re-run `terraform apply` — all supporting infrastructure is already in place
 
