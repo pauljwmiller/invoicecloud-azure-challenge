@@ -6,7 +6,7 @@ Includes bonus items:
 - **VNet + Private DNS Zone** configured for private endpoint access
 - **GitHub Actions CI/CD pipeline** for automated build and deploy
 
-> **Note on Private Endpoint:** Azure does not support Private Endpoints on the Consumption (Dynamic/Y1) plan — this is a hard platform constraint. The VNet, subnet, and Private DNS Zone are fully provisioned and documented. A Private Endpoint would require upgrading to a Premium plan. See the [Bonus section](#bonus-private-endpoint--networking) for full details.
+> **Note on Private Endpoint:** Azure does not support Private Endpoints on the Consumption (Dynamic/Y1) plan — this is a hard platform constraint. The VNet, subnet, and Private DNS Zone are fully provisioned and documented. A Private Endpoint on the Function App would require upgrading to a plan that supports VNet integration (EP1, Flex Consumption, or equivalent). See the [Bonus section](#bonus-private-endpoint--networking) for full details.
 
 ---
 
