@@ -265,7 +265,7 @@ This deletes the resource group and everything inside it.
 
 ## Security Notes
 
-- No credentials or secrets are committed to this repository
+- No credentials or secrets are committed to this repository — the subscription ID in `terraform.tfvars` is a public identifier, not a credential; it grants no access without accompanying Azure credentials
 - `local.settings.json` is excluded via `.gitignore`
 - Terraform state is local — for team use, migrate state to Azure Blob Storage backend
 - The storage account access key is passed to the Function App via Terraform; for production use `storage_uses_managed_identity = true` with a managed identity instead
