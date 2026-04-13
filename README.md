@@ -16,7 +16,7 @@ Includes bonus items:
 https://func-invoicecloud-hello-dev-6koqhv.azurewebsites.net/api/httpget
 ```
 
-> Requires a function key (`?code=<key>`). See [Validation](#validation) below.
+> No key required — the function uses `AuthorizationLevel.Anonymous`. Open in a browser or `curl` directly.
 
 ---
 
@@ -57,7 +57,9 @@ https://func-invoicecloud-hello-dev-6koqhv.azurewebsites.net/api/httpget
 | Function App | `func-invoicecloud-hello-dev-{suffix}` | Hosts the HTTP functions |
 | Virtual Network | `vnet-invoicecloud-func-dev` | Bonus: network for private endpoint |
 | Subnet | `snet-pe-invoicecloud-dev` | Bonus: dedicated PE subnet |
-| Private DNS Zone | `privatelink.azurewebsites.net` | Bonus: private DNS resolution |
+| Private DNS Zone | `privatelink.azurewebsites.net` | Bonus: private DNS for function app |
+| Private DNS Zone | `privatelink.blob.core.windows.net` | Bonus: private DNS for storage account |
+| Private Endpoint | `pe-sa-invoicecloud-dev` | Bonus: private endpoint on storage account blob |
 
 ---
 
@@ -132,30 +134,25 @@ This builds the .NET 9 project, packages it, uploads to blob storage, and syncs 
 
 ---
 
+## Authorization
+
+The original Azure-Samples template uses `AuthorizationLevel.Function`, which requires a `?code=<key>` query parameter on every request. This project changes that to `AuthorizationLevel.Anonymous` so the endpoint is publicly testable without managing function keys — appropriate for a demo/challenge environment. In production you would use `Function` or `Admin` level and distribute keys only to authorized callers.
+
+---
+
 ## Validation
 
-Get the function key:
+No key required. Test directly:
 
 ```bash
-FUNC_APP_NAME=$(cd terraform && terraform output -raw function_app_name)
-
-az functionapp keys list \
-  --resource-group rg-invoicecloud-func-dev \
-  --name "$FUNC_APP_NAME" \
-  --query "functionKeys.default" -o tsv
-```
-
-Test the endpoint:
-
-```bash
-FUNC_KEY=<your-function-key>
 FUNC_URL=$(cd terraform && terraform output -raw function_url)
 
-# Returns "Hello, World."
-curl "${FUNC_URL}?code=${FUNC_KEY}"
+# No name param — returns "Hello, World."
+curl "$FUNC_URL"
 
-# Returns "Hello, Paul."
-curl "${FUNC_URL}?code=${FUNC_KEY}&name=Paul"
+# With name param — returns "Hello, {name}." for any name provided
+curl "${FUNC_URL}?name=Paul"
+curl "${FUNC_URL}?name=Jane"
 ```
 
 Expected responses:
@@ -163,37 +160,68 @@ Expected responses:
 ```
 Hello, World.
 Hello, Paul.
+Hello, Jane.
+```
+
+Or open the URL directly in a browser:
+```
+https://func-invoicecloud-hello-dev-6koqhv.azurewebsites.net/api/httpget
 ```
 
 ---
 
 ## Bonus: Private Endpoint & Networking
 
-### What was provisioned
+### What is provisioned and working
 
-The Terraform configuration provisions a full networking stack ready for private endpoint connectivity:
+The full networking stack is live:
 
-- **VNet** (`10.0.0.0/16`) in `eastus2`
-- **Subnet** (`10.0.1.0/24`) dedicated for private endpoints
-- **Private DNS Zone** (`privatelink.azurewebsites.net`) linked to the VNet
+| Resource | Name | Status |
+|---|---|---|
+| Virtual Network (`10.0.0.0/16`) | `vnet-invoicecloud-func-dev` | ✅ Provisioned |
+| Subnet (`10.0.1.0/24`) | `snet-pe-invoicecloud-dev` | ✅ Provisioned |
+| Private DNS Zone | `privatelink.azurewebsites.net` | ✅ Linked to VNet |
+| Private DNS Zone | `privatelink.blob.core.windows.net` | ✅ Linked to VNet |
+| Private Endpoint (storage blob) | `pe-sa-invoicecloud-dev` | ✅ Live — IP `10.0.1.4` |
+| Private Endpoint (function app) | `pe-func-invoicecloud-dev` | ⚠️ See below |
 
-### Azure platform constraint
+### Storage Account Private Endpoint
 
-Private Endpoints on Azure Function Apps require a **Premium (EP1+) or Dedicated plan**. The Consumption (Y1/Dynamic) plan does not support them — this is an Azure platform limitation, not a configuration issue. Attempting to create a private endpoint against a Dynamic-plan function app returns:
+The storage account is the data-plane backbone of the Function App — it stores the deployment package, function keys, and trigger state. A private endpoint on the storage account's `blob` sub-resource is **fully supported on the Consumption plan** and is a legitimate production hardening step independent of the function app plan tier.
+
+This is live and assigned private IP `10.0.1.4`. Any client inside the VNet resolving `stinvoicecloud<suffix>.blob.core.windows.net` will get the private IP via the linked DNS zone.
+
+`public_network_access_enabled` remains `true` on the storage account because the Consumption plan Function App has no VNet integration and must reach storage over the public endpoint. Disabling public access is part of the production hardening path below.
+
+### Function App Private Endpoint — platform constraint
+
+Azure does not support inbound Private Endpoints on the Consumption (Y1/Dynamic) plan. Attempting to provision one returns:
 
 ```
 BadRequest: SkuCode 'Dynamic' is invalid.
 ```
 
-### What this means in practice
+This is an Azure platform limitation, not a configuration issue. The private endpoint resource is fully defined in `main.tf` and commented out with this explanation. The DNS zone, VNet, and subnet are all correctly configured and ready.
 
-The networking infrastructure is in place. To enable a private endpoint:
-1. Upgrade the App Service Plan from `Y1` to `EP1` (Elastic Premium) in `main.tf`
-2. Re-run `terraform apply` — the private endpoint resource is already defined and will provision successfully
+### Access model
 
-### Access model (with Premium plan)
+Public access is **intentionally enabled** per the challenge requirements — the function responds to `curl` from anywhere. With a private endpoint active (Premium or Flex Consumption plan), the access model would be:
 
-Public access would be **intentionally left enabled** per the challenge requirements to allow testing with `curl`. In production you would set `public_network_access_enabled = false` and route all access through a VM, VPN gateway, or Azure Bastion in the same VNet.
+| Path | How |
+|---|---|
+| Public (testing) | `https://func-invoicecloud-hello-dev-<suffix>.azurewebsites.net/api/httpget` |
+| Private (VNet) | Deploy a VM into the VNet and `curl` the same hostname — DNS resolves to the private IP |
+| Private (remote) | Connect via VPN Gateway or Azure Bastion, then access via hostname as above |
+
+In production you would set `public_network_access_enabled = false` on the Function App to force all traffic through the private endpoint.
+
+### Enabling the Function App Private Endpoint
+
+One change in `main.tf`, then `terraform apply`:
+
+1. Change `sku_name = "Y1"` to `sku_name = "EP1"` (or migrate to Flex Consumption)
+2. Uncomment the `azurerm_private_endpoint.pe_func` resource block
+3. Re-run `terraform apply` — all supporting infrastructure is already in place
 
 ---
 
