@@ -115,8 +115,24 @@ function_url          = "https://func-invoicecloud-hello-dev-6koqhv.azurewebsite
 resource_group_name   = "rg-invoicecloud-func-dev"
 ```
 
-> **Note:** On new Azure subscriptions the Consumption plan may need to be created via `az functionapp create --consumption-plan-location` rather than Terraform directly due to a Dynamic VM quota constraint. If `terraform apply` fails on the App Service Plan resource, create the function app manually with that CLI command, then import it into Terraform state:
+> **Note:** On free or trial Azure subscriptions, certain regions set the Dynamic vCPU quota to zero by default. This quota is not visible in the Azure quota management blade and cannot be increased directly. If `terraform apply` fails on the App Service Plan resource with an error like `The subscription does not have a quota for this operation` or `QuotaExceeded`, the cause is this hidden quota — not a permissions issue. The workaround is to create the function app via the CLI, which uses a different provisioning path that appears to succeed where the ARM API call does not, then import the created resources into Terraform state:
 > ```bash
+> # Create the function app via CLI
+> az functionapp create \
+>   --resource-group rg-invoicecloud-func-dev \
+>   --consumption-plan-location eastus2 \
+>   --runtime dotnet-isolated \
+>   --functions-version 4 \
+>   --name <func-app-name> \
+>   --storage-account <storage-account-name>
+>
+> # Find the auto-generated plan name
+> az functionapp show \
+>   --name <func-app-name> \
+>   --resource-group rg-invoicecloud-func-dev \
+>   --query appServicePlanId
+>
+> # Import both resources into Terraform state
 > terraform import azurerm_service_plan.asp /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.Web/serverFarms/<plan-name>
 > terraform import azurerm_linux_function_app.func /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.Web/sites/<func-name>
 > ```
